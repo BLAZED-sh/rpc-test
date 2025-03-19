@@ -14,7 +14,9 @@ import (
 
 func main() {
 	// Define command line flags
-	socketPath := flag.String("socket", "", "Path to the Ethereum node Unix domain socket (required)")
+	socketPath := flag.String("socket", "", "Path to the Ethereum node Unix domain socket")
+	wsURL := flag.String("ws", "", "WebSocket URL of the Ethereum node (ws:// or wss://)")
+	httpURL := flag.String("http", "", "HTTP URL of the Ethereum node (http:// or https://)")
 	outputFormat := flag.String("format", "text", "Output format: text, markdown, or json")
 	timeoutSeconds := flag.Int("timeout", 180, "Timeout in seconds for the entire test run")
 	runSubscriptions := flag.Bool("subscriptions", false, "Run subscription tests (may take longer)")
@@ -61,11 +63,22 @@ func main() {
 		log.Warn().Str("level", *logLevel).Msg("Unknown log level, defaulting to info")
 	}
 	
-	// Validate socket path
-	if *socketPath == "" {
-		log.Error().Msg("Socket path is required")
+	// Validate endpoint - one of socket path, websocket URL, or HTTP URL is required
+	endpoint := *socketPath
+	endpointType := "socket"
+	
+	if endpoint == "" && *wsURL == "" && *httpURL == "" {
+		log.Error().Msg("Either socket path, WebSocket URL, or HTTP URL is required")
 		flag.Usage()
 		os.Exit(1)
+	}
+	
+	if endpoint == "" && *wsURL != "" {
+		endpoint = *wsURL
+		endpointType = "websocket"
+	} else if endpoint == "" && *httpURL != "" {
+		endpoint = *httpURL
+		endpointType = "http"
 	}
 	
 	// Create context with timeout
@@ -73,14 +86,14 @@ func main() {
 	defer cancel()
 	
 	// Create test runner
-	log.Info().Str("socket", *socketPath).Msg("Creating test runner")
-	runner, err := rpctest.NewTestRunner(*socketPath)
+	log.Info().Str("endpoint", endpoint).Str("type", endpointType).Msg("Creating test runner")
+	runner, err := rpctest.NewTestRunner(endpoint)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create test runner")
 	}
 	defer runner.Close()
 	
-	log.Info().Str("socket", *socketPath).Msg("Starting Ethereum RPC tests")
+	log.Info().Str("endpoint", endpoint).Str("type", endpointType).Msg("Starting Ethereum RPC tests")
 	
 	// Run regular RPC tests
 	log.Info().Msg("Running regular RPC tests")
@@ -88,6 +101,12 @@ func main() {
 	
 	// Run subscription tests if requested
 	if *runSubscriptions {
+		// Give a warning if using HTTP for subscriptions (they won't work)
+		if endpointType == "http" {
+			log.Warn().Msg("Subscription tests were requested but you're using HTTP transport, which doesn't support subscriptions")
+			log.Warn().Msg("Consider using WebSocket (--ws) or Unix socket (--socket) instead for subscription tests")
+		}
+		
 		log.Info().Msg("Running subscription tests (this may take a while)")
 		subResults := runner.RunSubscriptionTests(ctx)
 		log.Info().Int("count", len(subResults)).Msg("Completed subscription tests")

@@ -9,7 +9,10 @@ A benchmarking and testing tool for Ethereum RPC node implementations. This tool
 
 ## Features
 
-- Test RPC methods against Unix domain socket endpoints (support for HTTP/WebSocket to be added)
+- Test RPC methods using various transport options:
+  - Unix domain sockets
+  - WebSockets (ws:// or wss://)
+  - HTTP/HTTPS JSON-RPC
 - Benchmark basic Ethereum JSON-RPC methods
 - Support for subscription-based tests (newHeads, logs, etc.)
 - Generate reports in multiple formats (text, markdown, JSON)
@@ -18,7 +21,10 @@ A benchmarking and testing tool for Ethereum RPC node implementations. This tool
 ## Requirements
 
 - Go 1.18 or later
-- An Ethereum node with a Unix domain socket exposed
+- An Ethereum node with one of the following:
+  - Unix domain socket exposed
+  - WebSocket endpoint
+  - HTTP JSON-RPC endpoint
 
 ## Installation
 
@@ -42,11 +48,18 @@ go build -o rpc-test ./cmd
 
 ### Command Line Options
 
-- `--socket`: Path to the Ethereum node Unix domain socket (required)
+Transport options (one is required):
+- `--socket`: Path to the Ethereum node Unix domain socket
+- `--ws`: WebSocket URL of the Ethereum node (ws:// or wss://)
+- `--http`: HTTP JSON-RPC URL of the Ethereum node (http:// or https://)
+
+Other options:
 - `--format`: Output format - text, markdown, or json (default: text)
 - `--timeout`: Timeout in seconds for the entire test run (default: 180)
 - `--subscriptions`: Run subscription tests which may take longer (default: false)
 - `--output`: Path to write the report (default: stdout)
+
+Note: WebSocket transport is recommended for subscription tests.
 
 ### Logging Options
 
@@ -59,29 +72,39 @@ go build -o rpc-test ./cmd
 
 ### Example Commands
 
-Basic test run with text output:
+Basic test run with Unix socket:
 ```bash
 ./rpc-test --socket /path/to/geth.ipc
 ```
 
-Run with subscription tests and save to markdown file:
+Using WebSocket transport:
 ```bash
-./rpc-test --socket /path/to/geth.ipc --subscriptions --format markdown --output report.md
+./rpc-test --ws ws://localhost:8546
+```
+
+Using HTTP transport:
+```bash
+./rpc-test --http http://localhost:8545
+```
+
+Run with subscription tests (recommended with WebSocket transport):
+```bash
+./rpc-test --ws wss://mainnet.infura.io/ws/v3/YOUR_PROJECT_ID --subscriptions --format markdown --output report.md
 ```
 
 Generate JSON report for integration with other tools:
 ```bash
-./rpc-test --socket /path/to/geth.ipc --format json --output report.json
+./rpc-test --http https://mainnet.infura.io/v3/YOUR_PROJECT_ID --format json --output report.json
 ```
 
-Run with detailed socket logging:
+Run with detailed logging:
 ```bash
-./rpc-test --socket /path/to/geth.ipc --log-level trace
+./rpc-test --ws ws://localhost:8546 --log-level trace
 ```
 
 Run with debug-level information:
 ```bash
-./rpc-test --socket /path/to/geth.ipc --log-level debug
+./rpc-test --http http://localhost:8545 --log-level debug
 ```
 
 Run with quiet output (errors only):
@@ -150,6 +173,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -157,8 +181,8 @@ import (
 )
 
 func main() {
-	// Create a client
-	client, err := rpctest.NewClient("/path/to/geth.ipc")
+	// Create a client - can use Unix socket, WebSocket or HTTP endpoint
+	client, err := rpctest.NewClient("/path/to/geth.ipc") // or "ws://localhost:8546" or "http://localhost:8545"
 	if err != nil {
 		panic(err)
 	}
@@ -171,21 +195,45 @@ func main() {
 		panic(err)
 	}
 	fmt.Println("Latest block:", blockNumber)
+	
+	// Use subscription (works best with Unix socket or WebSocket)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	handler := func(data json.RawMessage) {
+		fmt.Printf("New block header: %s\n", string(data))
+	}
+	
+	subID, err := client.Subscribe(ctx, "eth", "newHeads", handler)
+	if err != nil {
+		panic(err)
+	}
+	
+	// Unsubscribe after a while
+	time.Sleep(10 * time.Second)
+	err = client.Unsubscribe("eth", subID)
+	if err != nil {
+		panic(err)
+	}
 
-	// Create a test runner
-	runner, err := rpctest.NewTestRunner("/path/to/geth.ipc")
+	// Create a test runner 
+	runner, err := rpctest.NewTestRunner("ws://localhost:8546")
 	if err != nil {
 		panic(err)
 	}
 	defer runner.Close()
 
 	// Run tests with context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	results := runner.RunTests(ctx)
+	
+	// Run subscription tests
+	subResults := runner.RunSubscriptionTests(ctx)
+	
+	// Combine results
+	allResults := append(results, subResults...)
 
 	// Generate report
-	reportGen := rpctest.NewReportGenerator(results)
+	reportGen := rpctest.NewReportGenerator(allResults)
 	report := reportGen.GenerateTextReport()
 	fmt.Println(report)
 }
