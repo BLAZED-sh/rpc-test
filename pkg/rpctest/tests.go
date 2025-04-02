@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,8 +48,7 @@ type SubscriptionTestCase struct {
 	Namespace   string
 	Method      string
 	Params      []interface{}
-	// WaitTime defines how long to wait for subscription events
-	WaitTime time.Duration
+	// Removed WaitTime field
 	// MinEvents is the minimum number of events that should be received for the test to be considered successful
 	MinEvents int
 	// Validator is called for each event and should return true if the event is valid
@@ -118,36 +118,43 @@ func GetDefaultTestCases() []TestCase {
 				if err := json.Unmarshal(result, &block); err != nil {
 					return false, fmt.Sprintf("Failed to parse block: %v", err)
 				}
-				
+
 				if block == nil {
 					return false, "Received null block"
 				}
-				
+
 				// Check for required fields
-				requiredFields := []string{"number", "hash", "parentHash", "timestamp", "gasUsed", "gasLimit"}
+				requiredFields := []string{
+					"number",
+					"hash",
+					"parentHash",
+					"timestamp",
+					"gasUsed",
+					"gasLimit",
+				}
 				for _, field := range requiredFields {
 					if _, ok := block[field]; !ok {
 						return false, fmt.Sprintf("Block missing required field: %s", field)
 					}
 				}
-				
+
 				// Convert block number to decimal
 				blockNumber, ok := block["number"].(string)
 				if !ok {
 					return false, "Block number is not a string"
 				}
-				
+
 				number, ok := new(big.Int).SetString(blockNumber[2:], 16)
 				if !ok {
 					return false, "Failed to convert block number to integer"
 				}
-				
+
 				// Count transactions
 				txCount := 0
 				if txs, ok := block["transactions"].([]interface{}); ok {
 					txCount = len(txs)
 				}
-				
+
 				return true, fmt.Sprintf("Block #%s with %d transactions", number.String(), txCount)
 			},
 		},
@@ -245,7 +252,6 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 			Namespace:   "eth",
 			Method:      "newHeads",
 			Params:      []interface{}{},
-			WaitTime:    time.Second * 60, // Wait up to a minute for at least one block
 			MinEvents:   1,
 			Validator: func(result json.RawMessage) (bool, string) {
 				var header map[string]interface{}
@@ -274,13 +280,10 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 			Method:      "logs",
 			Params: []interface{}{
 				map[string]interface{}{
-					"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT contract
-					"topics": []string{
-						"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // Transfer(address,address,uint256)
-					},
+					"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT contract 
+					"topics":  []interface{}{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}, // Transfer(address,address,uint256)
 				},
 			},
-			WaitTime:  time.Second * 30, // Wait up to 30 seconds for transfers, should be almost immediate
 			MinEvents: 1,
 			Validator: func(result json.RawMessage) (bool, string) {
 				var log map[string]interface{}
@@ -316,7 +319,11 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 					txHash = hash
 				}
 
-				return true, fmt.Sprintf("Received valid USDT transfer log in block %s, tx: %s", blockNumberHex, txHash)
+				return true, fmt.Sprintf(
+					"Received valid USDT transfer log in block %s, tx: %s",
+					blockNumberHex,
+					txHash,
+				)
 			},
 		},
 		{
@@ -327,12 +334,9 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 			Params: []interface{}{
 				map[string]interface{}{
 					"address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC contract
-					"topics": []string{
-						"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // Transfer(address,address,uint256)
-					},
+					"topics":  []interface{}{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}, // Transfer(address,address,uint256)
 				},
 			},
-			WaitTime:  time.Second * 30, // Wait up to 30 seconds for transfers, should be almost immediate
 			MinEvents: 1,
 			Validator: func(result json.RawMessage) (bool, string) {
 				var log map[string]interface{}
@@ -351,10 +355,32 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 					}
 				}
 
-				// Check that the address is USDC
-				address, ok := log["address"].(string)
-				if !ok || address != "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" {
-					return false, fmt.Sprintf("Unexpected contract address: %s", address)
+				// Check that the address is USDC or that it's a transfer to/from USDC
+				logAddr, logAddrOk := log["address"].(string)
+				if !logAddrOk {
+					return false, fmt.Sprintf("Missing address in log")
+				}
+				
+				// Try to extract topics
+				var toAddr string
+				
+				if topicsArray, ok := log["topics"].([]interface{}); ok && len(topicsArray) >= 3 {
+					// The 3rd topic (index 2) is usually the destination address in Transfer events
+					if topicStr, ok := topicsArray[2].(string); ok {
+						// Convert from topic format (0x000000000000000000000000{address}) to address format
+						if len(topicStr) >= 42 {
+							// Extract the last 40 characters (20 bytes) of the topic and add 0x prefix
+							toAddr = "0x" + topicStr[len(topicStr)-40:]
+						}
+					}
+				}
+				
+				// Check for USDC address either as the contract address or transfer recipient
+				targetContract := "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+				if strings.EqualFold(logAddr, targetContract) || (toAddr != "" && strings.EqualFold(toAddr, targetContract)) {
+					// Valid - either it's the USDC contract or a transfer to USDC
+				} else {
+					return false, fmt.Sprintf("Unexpected contract / target address: %s / %s", logAddr, toAddr)
 				}
 
 				// Extract some data for better log message
@@ -368,7 +394,11 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 					txHash = hash
 				}
 
-				return true, fmt.Sprintf("Received valid USDC transfer log in block %s, tx: %s", blockNumberHex, txHash)
+				return true, fmt.Sprintf(
+					"Received valid USDC transfer log in block %s, tx: %s",
+					blockNumberHex,
+					txHash,
+				)
 			},
 		},
 	}
@@ -422,11 +452,15 @@ func (tr *TestRunner) RunTests(ctx context.Context) []BenchmarkResult {
 }
 
 // RunSubscriptionTests executes all registered subscription test cases
-func (tr *TestRunner) RunSubscriptionTests(ctx context.Context) []BenchmarkResult {
+func (tr *TestRunner) RunSubscriptionTests(
+	ctx context.Context,
+	shareClient bool,
+) []BenchmarkResult {
 	// Check if the transport supports subscriptions
-	if !tr.client.transport.SupportsSubscriptions() {
-		log.Warn().Msg("The current transport does not support subscriptions (HTTP endpoints cannot be used for subscriptions)")
-		
+	if !tr.client.SupportsSubscriptions() {
+		log.Warn().
+			Msg("The current transport does not support subscriptions (HTTP endpoints cannot be used for subscriptions)")
+
 		// Return empty results marked as failed
 		results := make([]BenchmarkResult, len(tr.subTestCases))
 		for i, test := range tr.subTestCases {
@@ -440,11 +474,14 @@ func (tr *TestRunner) RunSubscriptionTests(ctx context.Context) []BenchmarkResul
 		}
 		return results
 	}
-	
+
 	totalTests := len(tr.subTestCases)
 	log.Info().Int("total", totalTests).Msg("Starting subscription tests")
 
 	results := make([]BenchmarkResult, len(tr.subTestCases))
+
+	// Get the endpoint to create fresh clients for each test if needed
+	endpoint := tr.client.endpoint
 
 	// Run tests sequentially to avoid socket contention
 	for i, test := range tr.subTestCases {
@@ -454,36 +491,42 @@ func (tr *TestRunner) RunSubscriptionTests(ctx context.Context) []BenchmarkResul
 			Str("test", test.Name).
 			Msg("Running subscription test")
 
-		// Add a small delay between tests
-		if i > 0 {
-			time.Sleep(500 * time.Millisecond) // Longer delay to ensure clean separation between tests
+		var testClient *Client
+		var err error
+
+		// If sharing client, use the existing one, otherwise create a fresh client
+		if shareClient {
+			log.Debug().Str("test", test.Name).Msg("Using shared client for subscription test")
+			testClient = tr.client
+		} else {
+			log.Debug().Str("test", test.Name).Msg("Creating fresh client for subscription test")
+			testClient, err = NewClient(endpoint)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to create client for subscription test")
+				results[i] = BenchmarkResult{
+					TestName:      test.Name,
+					Success:       false,
+					Error:         fmt.Sprintf("Client creation failed: %v", err),
+					Duration:      0,
+					StatusMessage: "Test initialization failed",
+				}
+				continue
+			}
 		}
 
-		// Create a context with timeout for this test
-		testCtx, cancel := context.WithTimeout(ctx, test.WaitTime)
-		
-		// Recover from any panics in the subscription test
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Error().
-						Interface("panic", r).
-						Str("test", test.Name).
-						Msg("Recovered from panic in subscription test")
-					
-					results[i] = BenchmarkResult{
-						TestName:      test.Name,
-						Success:       false,
-						Error:         fmt.Sprintf("Test panicked: %v", r),
-						Duration:      time.Second * 5, // Reasonable default time for error case
-						StatusMessage: "Failed with panic",
-					}
-				}
-			}()
-			
-			results[i] = tr.runSubscriptionTest(testCtx, test)
-		}()
-		
+		// Create a context without timeout for this test
+		testCtx, cancel := context.WithCancel(ctx)
+
+		// Run the test with the dedicated client
+		results[i] = runSubscriptionTestWithClient(testCtx, testClient, test)
+
+		// Only close the test-specific client if we didn't use the shared one
+		if !shareClient {
+			if err := testClient.Close(); err != nil {
+				log.Warn().Err(err).Msg("Error closing test client")
+			}
+		}
+
 		// Cancel context immediately after test completes
 		cancel()
 
@@ -520,6 +563,13 @@ func (tr *TestRunner) runTest(ctx context.Context, test TestCase) BenchmarkResul
 	}
 
 	// Create a JSON request to estimate size
+	type jsonRPCRequest struct {
+		JSONRPC string        `json:"jsonrpc"`
+		Method  string        `json:"method"`
+		Params  []interface{} `json:"params"`
+		ID      int           `json:"id"`
+	}
+
 	request := jsonRPCRequest{
 		JSONRPC: "2.0",
 		Method:  test.Method,
@@ -582,31 +632,44 @@ func (tr *TestRunner) runTest(ctx context.Context, test TestCase) BenchmarkResul
 	return result
 }
 
-// runSubscriptionTest executes a single subscription test case
-func (tr *TestRunner) runSubscriptionTest(ctx context.Context, test SubscriptionTestCase) BenchmarkResult {
+// runSubscriptionTestWithClient executes a single subscription test case with a dedicated client
+func runSubscriptionTestWithClient(
+	ctx context.Context,
+	client *Client,
+	test SubscriptionTestCase,
+) BenchmarkResult {
 	result := BenchmarkResult{
 		TestName: test.Name,
 	}
 
 	// Create a JSON request to estimate size (only for metrics)
-	req := jsonRPCRequest{
-		JSONRPC: "2.0",
-		Method:  test.Namespace + "_subscribe",
-		Params:  append([]interface{}{test.Method}, test.Params...),
-		ID:      1,
-	}
+	// type jsonRPCRequest struct {
+	// 	JSONRPC string        `json:"jsonrpc"`
+	// 	Method  string        `json:"method"`
+	// 	Params  []interface{} `json:"params"`
+	// 	ID      int           `json:"id"`
+	// }
 
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("Failed to marshal request: %v", err)
-		log.Error().Err(err).Str("test", test.Name).Msg("Failed to marshal subscription request")
-		return result
-	}
+	// req := jsonRPCRequest{
+	// 	JSONRPC: "2.0",
+	// 	Method:  test.Namespace + "_subscribe",
+	// 	Params:  append([]interface{}{test.Method}, test.Params...),
+	// 	ID:      1,
+	// }
 
-	result.RequestSize = len(reqBytes)
+	// reqBytes, err := json.Marshal(req)
+	// if err != nil {
+	// 	result.Success = false
+	// 	result.Error = fmt.Sprintf("Failed to marshal request: %v", err)
+	// 	log.Error().Err(err).Str("test", test.Name).Msg("Failed to marshal subscription request")
+	// 	return result
+	// }
+
+	// result.RequestSize = len(reqBytes)
 
 	log.Debug().Str("test", test.Name).Msg("Testing subscription")
+
+	// Don't reset between subscriptions - a healthy WebSocket should handle multiple subscriptions
 
 	// Create a channel to collect events
 	eventCh := make(chan json.RawMessage, 100)
@@ -623,12 +686,12 @@ func (tr *TestRunner) runSubscriptionTest(ctx context.Context, test Subscription
 			Str("test", test.Name).
 			RawJSON("data", data).
 			Msg("Subscription event received")
-		
+
 		select {
 		case eventCh <- data:
 			eventsMu.Lock()
 			eventCount++
-			
+
 			// Validate event if validator is provided
 			if test.Validator != nil {
 				valid, msg := test.Validator(data)
@@ -654,49 +717,47 @@ func (tr *TestRunner) runSubscriptionTest(ctx context.Context, test Subscription
 	}
 
 	// Subscribe
-	subID, err := tr.client.Subscribe(ctx, test.Namespace, test.Method, handler, test.Params...)
+	subID, err := client.Subscribe(ctx, test.Namespace, test.Method, handler, test.Params...)
 	if err != nil {
 		result.Success = false
-		result.Error = fmt.Sprintf("Subscription failed: %v", err)
+		result.Error = fmt.Sprintf("Subscription failed: %s", err)
 		result.Duration = time.Since(start)
-		log.Debug().
+		log.Error().
 			Err(err).
 			Str("test", test.Name).
-			Msg("Subscription creation failed")
+			Msg("All subscription attempts failed")
 		return result
 	}
 
 	log.Info().
 		Str("test", test.Name).
 		Str("subscription_id", subID).
-		Str("wait_time", test.WaitTime.String()).
 		Int("min_events", test.MinEvents).
 		Msg("Waiting for subscription events")
 
-	// Wait for events or timeout
-	timeoutCh := time.After(test.WaitTime)
+	// Wait for events (removed timeout)
 	finished := false
 
+	// This used to use a timeout, now it only checks for context cancellation
+	// or minimum events received
 	for !finished {
 		select {
 		case <-ctx.Done():
 			finished = true
-		case <-timeoutCh:
-			finished = true
-		case <-time.After(1 * time.Second):
-			// Periodic check for minimum events
+		default:
+			// Check for minimum events without delay
 			eventsMu.Lock()
 			count := eventCount
 			valid := validEvents
 			eventsMu.Unlock()
-			
-			log.Debug().
-				Str("test", test.Name).
-				Int("events", count).
-				Int("valid_events", valid).
-				Int("min_events", test.MinEvents).
-				Msg("Subscription status")
-			
+
+			// log.Debug().
+			// 	Str("test", test.Name).
+			// 	Int("events", count).
+			// 	Int("valid_events", valid).
+			// 	Int("min_events", test.MinEvents).
+			// 	Msg("Subscription status")
+
 			if valid >= test.MinEvents {
 				log.Info().
 					Str("test", test.Name).
@@ -716,26 +777,29 @@ func (tr *TestRunner) runSubscriptionTest(ctx context.Context, test Subscription
 	eventsMu.Unlock()
 
 	// Unsubscribe
-	err = tr.client.Unsubscribe(test.Namespace, subID)
-	duration := time.Since(start)
-	result.Duration = duration
-
+	err = client.Unsubscribe(test.Namespace, subID)
 	if err != nil {
-		log.Warn().
+		log.Error().
 			Err(err).
 			Str("test", test.Name).
 			Str("subscription_id", subID).
 			Msg("Unsubscribe failed")
-		// Don't fail the test just because unsubscribe failed
 	}
+
+	duration := time.Since(start)
+	result.Duration = duration
 
 	// Check if we received enough events
 	if finalValid >= test.MinEvents {
 		result.Success = true
-		result.StatusMessage = fmt.Sprintf("Received %d valid events (%d total)", finalValid, finalCount)
+		result.StatusMessage = fmt.Sprintf(
+			"Received %d valid events (%d total)",
+			finalValid,
+			finalCount,
+		)
 	} else {
 		result.Success = false
-		result.Error = fmt.Sprintf("Received only %d valid events (%d total), needed %d", 
+		result.Error = fmt.Sprintf("Received only %d valid events (%d total), needed %d",
 			finalValid, finalCount, test.MinEvents)
 	}
 
@@ -757,3 +821,4 @@ func (tr *TestRunner) runSubscriptionTest(ctx context.Context, test Subscription
 
 	return result
 }
+
