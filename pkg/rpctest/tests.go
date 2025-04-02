@@ -27,7 +27,6 @@ type BenchmarkResult struct {
 	Success       bool
 	Duration      time.Duration
 	Error         string
-	RequestSize   int
 	ResponseSize  int
 	StatusMessage string
 }
@@ -280,7 +279,7 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 			Method:      "logs",
 			Params: []interface{}{
 				map[string]interface{}{
-					"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT contract 
+					"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",                                        // USDT contract
 					"topics":  []interface{}{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}, // Transfer(address,address,uint256)
 				},
 			},
@@ -333,7 +332,7 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 			Method:      "logs",
 			Params: []interface{}{
 				map[string]interface{}{
-					"address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC contract
+					"address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",                                        // USDC contract
 					"topics":  []interface{}{"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}, // Transfer(address,address,uint256)
 				},
 			},
@@ -360,10 +359,10 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 				if !logAddrOk {
 					return false, fmt.Sprintf("Missing address in log")
 				}
-				
+
 				// Try to extract topics
 				var toAddr string
-				
+
 				if topicsArray, ok := log["topics"].([]interface{}); ok && len(topicsArray) >= 3 {
 					// The 3rd topic (index 2) is usually the destination address in Transfer events
 					if topicStr, ok := topicsArray[2].(string); ok {
@@ -374,7 +373,7 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 						}
 					}
 				}
-				
+
 				// Check for USDC address either as the contract address or transfer recipient
 				targetContract := "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 				if strings.EqualFold(logAddr, targetContract) || (toAddr != "" && strings.EqualFold(toAddr, targetContract)) {
@@ -562,38 +561,13 @@ func (tr *TestRunner) runTest(ctx context.Context, test TestCase) BenchmarkResul
 		TestName: test.Name,
 	}
 
-	// Create a JSON request to estimate size
-	type jsonRPCRequest struct {
-		JSONRPC string        `json:"jsonrpc"`
-		Method  string        `json:"method"`
-		Params  []interface{} `json:"params"`
-		ID      int           `json:"id"`
-	}
-
-	request := jsonRPCRequest{
-		JSONRPC: "2.0",
-		Method:  test.Method,
-		Params:  test.Params,
-		ID:      1,
-	}
-
-	reqBytes, err := json.Marshal(request)
-	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("Failed to marshal request: %v", err)
-		log.Error().Err(err).Str("test", test.Name).Msg("Failed to marshal request")
-		return result
-	}
-
-	result.RequestSize = len(reqBytes)
-
 	log.Debug().Str("test", test.Name).Msg("Executing test")
 
 	// Execute the test with timing
 	start := time.Now()
 	var response json.RawMessage
 
-	err = tr.client.Call(test.Method, &response, test.Params...)
+	err := tr.client.Call(test.Method, &response, test.Params...)
 	duration := time.Since(start)
 	result.Duration = duration
 
@@ -641,31 +615,6 @@ func runSubscriptionTestWithClient(
 	result := BenchmarkResult{
 		TestName: test.Name,
 	}
-
-	// Create a JSON request to estimate size (only for metrics)
-	// type jsonRPCRequest struct {
-	// 	JSONRPC string        `json:"jsonrpc"`
-	// 	Method  string        `json:"method"`
-	// 	Params  []interface{} `json:"params"`
-	// 	ID      int           `json:"id"`
-	// }
-
-	// req := jsonRPCRequest{
-	// 	JSONRPC: "2.0",
-	// 	Method:  test.Namespace + "_subscribe",
-	// 	Params:  append([]interface{}{test.Method}, test.Params...),
-	// 	ID:      1,
-	// }
-
-	// reqBytes, err := json.Marshal(req)
-	// if err != nil {
-	// 	result.Success = false
-	// 	result.Error = fmt.Sprintf("Failed to marshal request: %v", err)
-	// 	log.Error().Err(err).Str("test", test.Name).Msg("Failed to marshal subscription request")
-	// 	return result
-	// }
-
-	// result.RequestSize = len(reqBytes)
 
 	log.Debug().Str("test", test.Name).Msg("Testing subscription")
 
@@ -821,4 +770,3 @@ func runSubscriptionTestWithClient(
 
 	return result
 }
-

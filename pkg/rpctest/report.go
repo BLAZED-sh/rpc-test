@@ -50,14 +50,13 @@ func (rg *ReportGenerator) GenerateTextReport() string {
 	total := len(rg.Results)
 	successful := 0
 	var totalDuration time.Duration
-	var totalReqSize, totalRespSize int
+	var totalRespSize int
 
 	for _, result := range rg.Results {
 		if result.Success {
 			successful++
 		}
 		totalDuration += result.Duration
-		totalReqSize += result.RequestSize
 		totalRespSize += result.ResponseSize
 	}
 
@@ -67,7 +66,6 @@ func (rg *ReportGenerator) GenerateTextReport() string {
 	sb.WriteString(fmt.Sprintf("Failed:          %d (%.1f%%)\n", total-successful, float64(total-successful)/float64(total)*100))
 	sb.WriteString(fmt.Sprintf("Total duration:  %s\n", totalDuration))
 	sb.WriteString(fmt.Sprintf("Avg. duration:   %s\n", totalDuration/time.Duration(total)))
-	sb.WriteString(fmt.Sprintf("Total request:   %d bytes\n", totalReqSize))
 	sb.WriteString(fmt.Sprintf("Total response:  %d bytes\n", totalRespSize))
 	sb.WriteString("\n")
 
@@ -98,7 +96,6 @@ func (rg *ReportGenerator) GenerateTextReport() string {
 
 		// Metrics
 		sb.WriteString(fmt.Sprintf("   Duration:     %s\n", result.Duration))
-		sb.WriteString(fmt.Sprintf("   Request size: %d bytes\n", result.RequestSize))
 		sb.WriteString(fmt.Sprintf("   Response size: %d bytes\n", result.ResponseSize))
 
 		// Status message or error
@@ -134,8 +131,6 @@ func (rg *ReportGenerator) GenerateTextReport() string {
 
 		// Metrics
 		sb.WriteString(fmt.Sprintf("   Duration:     %s\n", result.Duration))
-		sb.WriteString(fmt.Sprintf("   Request size: %d bytes\n", result.RequestSize))
-		sb.WriteString(fmt.Sprintf("   Response size: %d bytes\n", result.ResponseSize))
 
 		// Status message or error
 		if result.Success {
@@ -185,14 +180,13 @@ func (rg *ReportGenerator) GenerateMarkdownReport() string {
 	total := len(rg.Results)
 	successful := 0
 	var totalDuration time.Duration
-	var totalReqSize, totalRespSize int
+	var totalRespSize int
 
 	for _, result := range rg.Results {
 		if result.Success {
 			successful++
 		}
 		totalDuration += result.Duration
-		totalReqSize += result.RequestSize
 		totalRespSize += result.ResponseSize
 	}
 
@@ -205,14 +199,13 @@ func (rg *ReportGenerator) GenerateMarkdownReport() string {
 	sb.WriteString(fmt.Sprintf("| Failed | %d (%.1f%%) |\n", total-successful, float64(total-successful)/float64(total)*100))
 	sb.WriteString(fmt.Sprintf("| Total duration | %s |\n", totalDuration))
 	sb.WriteString(fmt.Sprintf("| Avg. duration | %s |\n", totalDuration/time.Duration(total)))
-	sb.WriteString(fmt.Sprintf("| Total request size | %d bytes |\n", totalReqSize))
 	sb.WriteString(fmt.Sprintf("| Total response size | %d bytes |\n", totalRespSize))
 	sb.WriteString("\n")
 
 	// Write detailed results in table format
 	sb.WriteString("## Detailed Results\n\n")
-	sb.WriteString("| Test | Status | Duration | Request | Response | Message |\n")
-	sb.WriteString("|------|--------|----------|---------|----------|--------|\n")
+	sb.WriteString("| Test | Status | Duration | Response | Message |\n")
+	sb.WriteString("|------|--------|--------------------|--------|\n")
 
 	for _, result := range rg.Results {
 		status := "✅"
@@ -225,11 +218,10 @@ func (rg *ReportGenerator) GenerateMarkdownReport() string {
 		// Escape pipe characters in the message
 		message = strings.ReplaceAll(message, "|", "\\|")
 
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d B | %d B | %s |\n",
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d B | %s |\n",
 			result.TestName,
 			status,
 			result.Duration,
-			result.RequestSize,
 			result.ResponseSize,
 			message,
 		))
@@ -248,14 +240,13 @@ func (rg *ReportGenerator) GenerateJSONReport() string {
 	total := len(rg.Results)
 	successful := 0
 	var totalDuration time.Duration
-	var totalReqSize, totalRespSize int
+	var totalRespSize int
 
 	for _, result := range rg.Results {
 		if result.Success {
 			successful++
 		}
 		totalDuration += result.Duration
-		totalReqSize += result.RequestSize
 		totalRespSize += result.ResponseSize
 	}
 
@@ -264,7 +255,6 @@ func (rg *ReportGenerator) GenerateJSONReport() string {
 	sb.WriteString(fmt.Sprintf("    \"failedTests\": %d,\n", total-successful))
 	sb.WriteString(fmt.Sprintf("    \"totalDurationMs\": %d,\n", totalDuration.Milliseconds()))
 	sb.WriteString(fmt.Sprintf("    \"avgDurationMs\": %d,\n", totalDuration.Milliseconds()/int64(total)))
-	sb.WriteString(fmt.Sprintf("    \"totalRequestBytes\": %d,\n", totalReqSize))
 	sb.WriteString(fmt.Sprintf("    \"totalResponseBytes\": %d\n", totalRespSize))
 	sb.WriteString("  },\n")
 
@@ -275,7 +265,6 @@ func (rg *ReportGenerator) GenerateJSONReport() string {
 		sb.WriteString(fmt.Sprintf("      \"name\": \"%s\",\n", result.TestName))
 		sb.WriteString(fmt.Sprintf("      \"success\": %t,\n", result.Success))
 		sb.WriteString(fmt.Sprintf("      \"durationMs\": %d,\n", result.Duration.Milliseconds()))
-		sb.WriteString(fmt.Sprintf("      \"requestBytes\": %d,\n", result.RequestSize))
 		sb.WriteString(fmt.Sprintf("      \"responseBytes\": %d,\n", result.ResponseSize))
 
 		if result.Success {

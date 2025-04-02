@@ -93,6 +93,9 @@ func main() {
 	// Run regular RPC tests
 	log.Info().Msg("Running regular RPC tests")
 	results := runner.RunTests(ctx)
+	
+	// Initialize allResults with the regular RPC test results
+	allResults := results
 
 	// Run subscription tests if requested
 	if *runSubscriptions {
@@ -109,11 +112,14 @@ func main() {
 		// Pass the shareClient flag to control whether to use fresh clients
 		subResults := runner.RunSubscriptionTests(ctx, *shareClient)
 		log.Info().Int("count", len(subResults)).Msg("Completed subscription tests")
+		
+		// Add subscription results to allResults
+		allResults = append(allResults, subResults...)
 	}
 
-	// Generate report
+	// Generate report with all results
 	log.Info().Msg("Generating report")
-	reportGen := rpctest.NewReportGenerator(results)
+	reportGen := rpctest.NewReportGenerator(allResults)
 
 	var report string
 	switch *outputFormat {
