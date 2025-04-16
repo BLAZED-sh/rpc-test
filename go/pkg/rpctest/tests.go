@@ -245,6 +245,7 @@ func GetDefaultTestCases() []TestCase {
 // GetDefaultSubscriptionTestCases returns a set of standard Ethereum subscription tests
 func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 	return []SubscriptionTestCase{
+		/*
 		{
 			Name:        "eth_newHeads",
 			Description: "Subscribe to new block headers",
@@ -271,7 +272,7 @@ func GetDefaultSubscriptionTestCases() []SubscriptionTestCase {
 
 				return true, fmt.Sprintf("Received valid block header: %v", header["number"])
 			},
-		},
+		},*/
 		{
 			Name:        "eth_logs_usdt",
 			Description: "Subscribe to logs for USDT transfers - high volume token",

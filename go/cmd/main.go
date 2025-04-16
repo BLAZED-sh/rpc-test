@@ -17,7 +17,7 @@ func main() {
 	socketPath := flag.String("socket", "", "Path to the Ethereum node Unix domain socket")
 	wsURL := flag.String("ws", "", "WebSocket URL of the Ethereum node (ws:// or wss://)")
 	httpURL := flag.String("http", "", "HTTP URL of the Ethereum node (http:// or https://)")
-	outputFormat := flag.String("format", "text", "Output format: text, markdown, or json")
+	outputFormat := flag.String("format", "text", "Output format: text (default) or json")
 	// Removed timeout parameter
 	runSubscriptions := flag.Bool("subscriptions", false, "Run subscription tests (may take longer)")
 	outputPath := flag.String("output", "", "Path to write the report (optional, default is stdout)")
@@ -125,8 +125,6 @@ func main() {
 	switch *outputFormat {
 	case "text":
 		report = reportGen.GenerateTextReport()
-	case "markdown":
-		report = reportGen.GenerateMarkdownReport()
 	case "json":
 		report = reportGen.GenerateJSONReport()
 	default:
