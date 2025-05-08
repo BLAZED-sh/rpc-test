@@ -771,3 +771,100 @@ func runSubscriptionTestWithClient(
 
 	return result
 }
+
+// RunFloodBenchmark floods the Ethereum node with a high volume of RPC calls and measures the performance
+func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, params []interface{}, numCalls int, concurrency int) []BenchmarkResult {
+	log.Info().
+		Str("method", method).
+		Int("numCalls", numCalls).
+		Int("concurrency", concurrency).
+		Msg("Starting RPC flood benchmark")
+
+	results := make([]BenchmarkResult, numCalls)
+	sem := make(chan bool, concurrency) // Semaphore to limit concurrency
+	var wg sync.WaitGroup
+	
+	// Create a throttled test case based on the provided method and params
+	testCase := TestCase{
+		Name:        fmt.Sprintf("flood_%s", method),
+		Description: fmt.Sprintf("Flood benchmark for %s", method),
+		Method:      method,
+		Params:      params,
+		Validator: func(result json.RawMessage) (bool, string) {
+			// Simple validator that just checks if we got a non-error response
+			if len(result) == 0 {
+				return false, "Empty response"
+			}
+			return true, "Response received"
+		},
+	}
+
+	// Start a goroutine for each call
+	for i := 0; i < numCalls; i++ {
+		wg.Add(1)
+		
+		go func(index int) {
+			defer wg.Done()
+			
+			// Acquire semaphore slot
+			sem <- true
+			defer func() { <-sem }() // Release semaphore slot when done
+			
+			// Run the test and capture result
+			result := tr.runTest(ctx, testCase)
+			result.TestName = fmt.Sprintf("%s_call_%d", testCase.Name, index)
+			
+			// Store the result
+			tr.mu.Lock()
+			results[index] = result
+			tr.mu.Unlock()
+			
+			// Log progress every 100 calls
+			if index%100 == 0 {
+				log.Info().
+					Int("completed", index).
+					Int("total", numCalls).
+					Str("method", method).
+					Msg("Flood benchmark progress")
+			}
+		}(i)
+	}
+
+	// Wait for all calls to complete
+	wg.Wait()
+	close(sem)
+	
+	// Analyze results
+	successCount := 0
+	var totalDuration time.Duration
+	var totalResponseSize int
+	
+	for _, result := range results {
+		if result.Success {
+			successCount++
+			totalDuration += result.Duration
+			totalResponseSize += result.ResponseSize
+		}
+	}
+	
+	// Log summary
+	avgDuration := time.Duration(0)
+	if successCount > 0 {
+		avgDuration = totalDuration / time.Duration(successCount)
+	}
+	
+	log.Info().
+		Int("totalCalls", numCalls).
+		Int("successful", successCount).
+		Dur("totalDuration", totalDuration).
+		Dur("avgDuration", avgDuration).
+		Int("totalResponseSize", totalResponseSize).
+		Msg("Flood benchmark completed")
+
+	// Add results to the test runner's results
+	tr.mu.Lock()
+	tr.results = append(tr.results, results...)
+	tr.mu.Unlock()
+
+	return results
+}
