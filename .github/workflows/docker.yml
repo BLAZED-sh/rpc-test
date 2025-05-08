@@ -48,28 +48,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          
-      - name: Update package visibility
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "Making package public..."
-          REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          PACKAGE_NAME=$(echo "$REPO_NAME" | cut -d '/' -f 2)
-          
-          # Get the package ID
-          PACKAGE_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME" | \
-            jq -r '.id')
-          
-          if [ "$PACKAGE_ID" != "null" ]; then
-            # Update visibility to public
-            curl -X PATCH \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              -d '{"visibility":"public"}' \
-              "https://api.github.com/orgs/${{ github.repository_owner }}/packages/container/$PACKAGE_NAME"
-            echo "Package visibility updated to public"
-          else
-            echo "Package not found or could not retrieve package ID"
-          fi
-
