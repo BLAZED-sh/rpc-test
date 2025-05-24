@@ -607,6 +607,57 @@ func (tr *TestRunner) runTest(ctx context.Context, test TestCase) BenchmarkResul
 	return result
 }
 
+// runTestWithContext executes a single RPC test case with a specific context
+func (tr *TestRunner) runTestWithContext(ctx context.Context, test TestCase) BenchmarkResult {
+	result := BenchmarkResult{
+		TestName: test.Name,
+	}
+
+	log.Debug().Str("test", test.Name).Msg("Executing test with context")
+
+	// Execute the test with timing
+	start := time.Now()
+	var response json.RawMessage
+
+	err := tr.client.CallWithContext(ctx, test.Method, &response, test.Params...)
+	duration := time.Since(start)
+	result.Duration = duration
+
+	if err != nil {
+		result.Success = false
+		result.Error = err.Error()
+		log.Debug().Err(err).Str("test", test.Name).Msg("Test failed")
+		return result
+	}
+
+	result.ResponseSize = len(response)
+
+	log.Debug().
+		Str("test", test.Name).
+		Int("response_size", len(response)).
+		Msg("Received response")
+
+	// Validate the result
+	success, msg := test.Validator(response)
+	result.Success = success
+	result.StatusMessage = msg
+
+	if !success {
+		result.Error = msg
+		log.Debug().
+			Str("test", test.Name).
+			Str("error", msg).
+			Msg("Validation failed")
+	} else {
+		log.Debug().
+			Str("test", test.Name).
+			Str("message", msg).
+			Msg("Validation succeeded")
+	}
+
+	return result
+}
+
 // runSubscriptionTestWithClient executes a single subscription test case with a dedicated client
 func runSubscriptionTestWithClient(
 	ctx context.Context,
@@ -781,7 +832,7 @@ func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, para
 		Msg("Starting RPC flood benchmark")
 
 	results := make([]BenchmarkResult, numCalls)
-	sem := make(chan bool, concurrency) // Semaphore to limit concurrency
+	sem := make(chan struct{}, concurrency) // Semaphore to limit concurrency
 	var wg sync.WaitGroup
 	
 	// Create a throttled test case based on the provided method and params
@@ -799,6 +850,15 @@ func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, para
 		},
 	}
 
+	// Create a context with timeout for individual calls
+	callTimeout := 30 * time.Second
+	
+	// Create a buffered channel for results to reduce mutex contention
+	resultChan := make(chan struct {
+		index  int
+		result BenchmarkResult
+	}, numCalls)
+
 	// Start a goroutine for each call
 	for i := 0; i < numCalls; i++ {
 		wg.Add(1)
@@ -806,18 +866,46 @@ func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, para
 		go func(index int) {
 			defer wg.Done()
 			
-			// Acquire semaphore slot
-			sem <- true
-			defer func() { <-sem }() // Release semaphore slot when done
+			// Try to acquire semaphore slot with timeout to avoid deadlock
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }() // Release semaphore slot when done
+			case <-ctx.Done():
+				// Context cancelled, return early with error result
+				resultChan <- struct {
+					index  int
+					result BenchmarkResult
+				}{
+					index: index,
+					result: BenchmarkResult{
+						TestName:      fmt.Sprintf("%s_call_%d", testCase.Name, index),
+						Success:       false,
+						Error:         "Context cancelled before acquiring semaphore",
+						Duration:      0,
+						StatusMessage: "Cancelled",
+					},
+				}
+				return
+			}
+			
+			// Create timeout context for this individual call
+			callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+			defer cancel()
 			
 			// Run the test and capture result
-			result := tr.runTest(ctx, testCase)
+			result := tr.runTestWithContext(callCtx, testCase)
 			result.TestName = fmt.Sprintf("%s_call_%d", testCase.Name, index)
 			
-			// Store the result
-			tr.mu.Lock()
-			results[index] = result
-			tr.mu.Unlock()
+			// Send result to channel instead of direct mutex access
+			select {
+			case resultChan <- struct {
+				index  int
+				result BenchmarkResult
+			}{index: index, result: result}:
+			case <-ctx.Done():
+				// Context cancelled, just return
+				return
+			}
 			
 			// Log progress every 100 calls
 			if index%100 == 0 {
@@ -830,9 +918,46 @@ func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, para
 		}(i)
 	}
 
-	// Wait for all calls to complete
-	wg.Wait()
-	close(sem)
+	// Start a goroutine to collect results and reduce contention
+	resultsDone := make(chan struct{})
+	go func() {
+		defer close(resultsDone)
+		for i := 0; i < numCalls; i++ {
+			select {
+			case res := <-resultChan:
+				results[res.index] = res.result
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait for all calls to complete with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		// All goroutines completed normally
+	case <-ctx.Done():
+		// Context cancelled, log warning
+		log.Warn().Msg("Flood benchmark cancelled by context")
+	case <-time.After(5 * time.Minute):
+		// Safety timeout to prevent infinite wait
+		log.Warn().Msg("Flood benchmark timed out after 5 minutes")
+	}
+	
+	// Wait for result collection to complete
+	select {
+	case <-resultsDone:
+	case <-time.After(30 * time.Second):
+		log.Warn().Msg("Result collection timed out")
+	}
+	
+	close(resultChan)
 	
 	// Analyze results
 	successCount := 0
@@ -861,7 +986,7 @@ func (tr *TestRunner) RunFloodBenchmark(ctx context.Context, method string, para
 		Int("totalResponseSize", totalResponseSize).
 		Msg("Flood benchmark completed")
 
-	// Add results to the test runner's results
+	// Add results to the test runner's results with single lock
 	tr.mu.Lock()
 	tr.results = append(tr.results, results...)
 	tr.mu.Unlock()

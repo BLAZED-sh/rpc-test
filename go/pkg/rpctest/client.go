@@ -108,13 +108,18 @@ func (c *Client) Close() error {
 
 // Call makes a synchronous RPC call
 func (c *Client) Call(method string, result interface{}, params ...interface{}) error {
+	return c.CallWithContext(c.ctx, method, result, params...)
+}
+
+// CallWithContext makes a synchronous RPC call with the provided context
+func (c *Client) CallWithContext(ctx context.Context, method string, result interface{}, params ...interface{}) error {
 	log.Debug().Str("method", method).Interface("params", params).Msg("Making RPC call")
 
 	// Track the start time for metrics
 	start := time.Now()
 
-	// Make the actual RPC call
-	err := c.rpcClient.CallContext(c.ctx, result, method, params...)
+	// Make the actual RPC call with the provided context
+	err := c.rpcClient.CallContext(ctx, result, method, params...)
 
 	// Log the result
 	duration := time.Since(start)
